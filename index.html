@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nashville Housing Pressure Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root {
+    --bg: #12151a;
+    --panel: #1b1f27;
+    --panel-border: #2a2f3a;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --accent: #4fb0ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header {
+    padding: 14px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+  #main { flex: 1; position: relative; }
+  #map { position: absolute; inset: 0; background: var(--bg); }
+  .panel {
+    position: absolute;
+    z-index: 500;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 12.5px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  }
+  #legend { top: 14px; right: 14px; width: 210px; }
+  #legend h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .legend-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  #controls { top: 14px; left: 14px; }
+  #controls label { display: flex; align-items: center; gap: 7px; margin: 5px 0; cursor: pointer; user-select: none; }
+  #status-banner {
+    position: absolute; bottom: 14px; left: 14px; right: 14px; z-index: 500;
+    background: #3a2b12; border: 1px solid #6b4a1a; color: #f0cf9a;
+    border-radius: 10px; padding: 10px 14px; font-size: 12.5px; display: none;
+  }
+  #status-banner a { color: #ffd48a; }
+  #stats { bottom: 14px; right: 14px; }
+  .stat-row { display: flex; justify-content: space-between; gap: 16px; margin: 3px 0; }
+  .stat-val { color: var(--accent); font-weight: 600; }
+  a { color: var(--accent); }
+  .leaflet-popup-content-wrapper { background: var(--panel); color: var(--text); border-radius: 8px; }
+  .leaflet-popup-tip { background: var(--panel); }
+  .leaflet-popup-content { font-size: 12.5px; line-height: 1.5; }
+  .leaflet-popup-content b { color: var(--accent); }
+  #loading {
+    position: absolute; inset: 0; z-index: 1000; background: var(--bg);
+    display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>Nashville Housing Pressure Map</h1>
+      <p>Short-term rental density vs. rent burden, by census tract — Davidson County</p>
+    </div>
+    <p style="max-width:420px;">Built on live Metro Nashville open data + Census ACS. Not affiliated with Metro Government.</p>
+  </header>
+  <div id="main">
+    <div id="loading">Loading live data from Metro Nashville + Census APIs&hellip;</div>
+    <div id="map"></div>
+    <div id="controls" class="panel">
+      <label><input type="checkbox" id="toggle-heat" checked> STR density (heatmap)</label>
+      <label><input type="checkbox" id="toggle-markers"> STR permits (points)</label>
+      <label><input type="checkbox" id="toggle-burden" checked> Rent burden (by tract)</label>
+    </div>
+    <div id="legend" class="panel">
+      <h3>Rent burden</h3>
+      <div class="legend-row"><span class="swatch" style="background:#2b6e3f"></span> &lt; 25% of income</div>
+      <div class="legend-row"><span class="swatch" style="background:#c7b23a"></span> 25&ndash;30%</div>
+      <div class="legend-row"><span class="swatch" style="background:#d98a3d"></span> 30&ndash;40% (cost-burdened)</div>
+      <div class="legend-row"><span class="swatch" style="background:#c0392b"></span> 40%+ (severely burdened)</div>
+      <div class="legend-row"><span class="swatch" style="background:#3a3f4a"></span> No data</div>
+      <h3 style="margin-top:12px;">STR permits</h3>
+      <div class="legend-row"><span class="swatch" style="background:#4fb0ff; border-radius:50%;"></span> Active permit</div>
+    </div>
+    <div id="stats" class="panel">
+      <div class="stat-row"><span>Active STR permits</span><span class="stat-val" id="stat-str">&mdash;</span></div>
+      <div class="stat-row"><span>Tracts mapped</span><span class="stat-val" id="stat-tracts">&mdash;</span></div>
+      <div class="stat-row"><span>Median rent burden</span><span class="stat-val" id="stat-burden">&mdash;</span></div>
+    </div>
+    <div id="status-banner"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.min.js"></script>
+<script>
+// ---------------------------------------------------------------------------
+// CONFIG
+// ---------------------------------------------------------------------------
+const CONFIG = {
+  // Free key, ~instant signup, no cost: https://api.census.gov/data/key_signup.html
+  // Without a key the rent-burden choropleth layer is skipped; STR data still loads.
+  // DO NOT commit a real key here — this file is public. Add it locally only.
+  CENSUS_API_KEY: "",
+  ACS_YEAR: 2023,
+  STATE_FIPS: "47",   // Tennessee
+  COUNTY_FIPS: "037",  // Davidson County
+};
+
+const STR_SERVICE =
+  "https://services2.arcgis.com/HdTo6HJqh92wn4D8/arcgis/rest/services/Residential_Short_Term_Rental_Permits_view/FeatureServer/0/query";
+const TRACT_SERVICE =
+  "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/4/query";
+
+// ---------------------------------------------------------------------------
+// MAP SETUP
+// ---------------------------------------------------------------------------
+const map = L.map("map", { zoomControl: true }).setView([36.1627, -86.7816], 11);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  maxZoom: 19,
+}).addTo(map);
+
+const burdenLayer = L.layerGroup();
+const heatLayerGroup = L.layerGroup();
+const markerLayerGroup = L.layerGroup();
+
+function showBanner(html) {
+  const el = document.getElementById("status-banner");
+  el.innerHTML = html;
+  el.style.display = "block";
+}
+
+// ---------------------------------------------------------------------------
+// DATA FETCHING
+// ---------------------------------------------------------------------------
+
+// Paginate an ArcGIS FeatureServer query until exhausted (or safety cap hit).
+async function fetchAllFeatures(serviceUrl, params, maxPages = 10, pageSize = 1000) {
+  let all = [];
+  let offset = 0;
+  for (let page = 0; page < maxPages; page++) {
+    const url = new URL(serviceUrl);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    url.searchParams.set("resultRecordCount", pageSize);
+    url.searchParams.set("resultOffset", offset);
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.error) throw new Error(json.error.message || "ArcGIS query error");
+    const feats = json.features || [];
+    all = all.concat(feats);
+    if (feats.length < pageSize) break;
+    offset += pageSize;
+  }
+  return all;
+}
+
+async function fetchSTRPermits() {
+  return fetchAllFeatures(STR_SERVICE, {
+    where: "Permit_Status='ISSUED'",
+    outFields: "Permit__,Permit_Subtype_Description,Date_Issued,Address,Permit_Status,Census_Tract,Lat,Lon",
+    f: "json",
+  });
+}
+
+async function fetchTractBoundaries() {
+  const url = new URL(TRACT_SERVICE);
+  url.searchParams.set("where", `STATE='${CONFIG.STATE_FIPS}' AND COUNTY='${CONFIG.COUNTY_FIPS}'`);
+  url.searchParams.set("outFields", "GEOID,TRACT");
+  url.searchParams.set("f", "geojson");
+  const res = await fetch(url);
+  return res.json();
+}
+
+async function fetchRentBurden() {
+  if (!CONFIG.CENSUS_API_KEY) return null;
+  const url =
+    `https://api.census.gov/data/${CONFIG.ACS_YEAR}/acs/acs5` +
+    `?get=NAME,B25071_001E,B25064_001E,B19013_001E` +
+    `&for=tract:*&in=state:${CONFIG.STATE_FIPS}+county:${CONFIG.COUNTY_FIPS}` +
+    `&key=${CONFIG.CENSUS_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Census API returned ${res.status}`);
+  const rows = await res.json();
+  const [header, ...data] = rows;
+  const idx = Object.fromEntries(header.map((h, i) => [h, i]));
+  const lookup = {};
+  data.forEach((row) => {
+    const geoid = `${row[idx.state]}${row[idx.county]}${row[idx.tract]}`;
+    lookup[geoid] = {
+      rentBurdenPct: parseFloat(row[idx.B25071_001E]),
+      medianRent: parseFloat(row[idx.B25064_001E]),
+      medianIncome: parseFloat(row[idx.B19013_001E]),
+    };
+  });
+  return lookup;
+}
+
+// Nashville's STR/building-permit Census_Tract field is county+tract concatenated
+// as an integer (leading zero on county dropped). Rebuild the full 11-digit GEOID.
+function tractFieldToGeoid(censusTractField) {
+  if (censusTractField == null) return null;
+  const padded = String(censusTractField).padStart(9, "0"); // county(3) + tract(6)
+  return `${CONFIG.STATE_FIPS}${padded}`;
+}
+
+function burdenColor(pct) {
+  if (pct == null || isNaN(pct)) return "#3a3f4a";
+  if (pct < 25) return "#2b6e3f";
+  if (pct < 30) return "#c7b23a";
+  if (pct < 40) return "#d98a3d";
+  return "#c0392b";
+}
+
+// ---------------------------------------------------------------------------
+// MAIN
+// ---------------------------------------------------------------------------
+async function main() {
+  try {
+    const [strFeatures, tractGeoJson, burdenLookup] = await Promise.all([
+      fetchSTRPermits(),
+      fetchTractBoundaries(),
+      fetchRentBurden().catch((err) => {
+        console.error("Census fetch failed:", err);
+        return null;
+      }),
+    ]);
+
+    document.getElementById("loading").style.display = "none";
+
+    // --- Rent burden choropleth ---
+    let burdenValues = [];
+    if (burdenLookup) {
+      L.geoJSON(tractGeoJson, {
+        style: (feature) => {
+          const geoid = feature.properties.GEOID;
+          const info = burdenLookup[geoid];
+          if (info && !isNaN(info.rentBurdenPct)) burdenValues.push(info.rentBurdenPct);
+          return {
+            color: "#12151a",
+            weight: 0.6,
+            fillColor: burdenColor(info ? info.rentBurdenPct : null),
+            fillOpacity: 0.55,
+          };
+        },
+        onEachFeature: (feature, layer) => {
+          const geoid = feature.properties.GEOID;
+          const info = burdenLookup[geoid];
+          const burden = info && !isNaN(info.rentBurdenPct) ? `${info.rentBurdenPct.toFixed(1)}%` : "No data";
+          const rent = info && !isNaN(info.medianRent) ? `$${Math.round(info.medianRent).toLocaleString()}/mo` : "No data";
+          const income = info && !isNaN(info.medianIncome) ? `$${Math.round(info.medianIncome).toLocaleString()}` : "No data";
+          layer.bindPopup(
+            `<b>Tract ${feature.properties.TRACT}</b><br>` +
+            `Median rent burden: ${burden}<br>` +
+            `Median gross rent: ${rent}<br>` +
+            `Median household income: ${income}`
+          );
+        },
+      }).addTo(burdenLayer);
+      burdenLayer.addTo(map);
+      document.getElementById("stat-tracts").textContent = Object.keys(burdenLookup).length;
+      if (burdenValues.length) {
+        burdenValues.sort((a, b) => a - b);
+        const median = burdenValues[Math.floor(burdenValues.length / 2)];
+        document.getElementById("stat-burden").textContent = `${median.toFixed(1)}%`;
+      }
+    } else {
+      showBanner(
+        'Rent-burden layer skipped &mdash; no Census API key configured. ' +
+        'Get a free key at <a href="https://api.census.gov/data/key_signup.html" target="_blank">api.census.gov/data/key_signup.html</a> ' +
+        'and set <code>CONFIG.CENSUS_API_KEY</code> in index.html.'
+      );
+    }
+
+    // --- STR permits: heatmap + markers ---
+    const heatPoints = [];
+    strFeatures.forEach((f) => {
+      const { Lat, Lon, Address, Permit_Subtype_Description, Date_Issued, Permit__ } = f.attributes;
+      if (Lat == null || Lon == null) return;
+      heatPoints.push([Lat, Lon, 0.6]);
+      const marker = L.circleMarker([Lat, Lon], {
+        radius: 4,
+        color: "#4fb0ff",
+        fillColor: "#4fb0ff",
+        fillOpacity: 0.75,
+        weight: 1,
+      });
+      const issued = Date_Issued ? new Date(Date_Issued).toLocaleDateString() : "Unknown";
+      marker.bindPopup(
+        `<b>${Address || "Address unavailable"}</b><br>` +
+        `${Permit_Subtype_Description || ""}<br>` +
+        `Permit #${Permit__ || "—"}<br>` +
+        `Issued: ${issued}`
+      );
+      markerLayerGroup.addLayer(marker);
+    });
+
+    if (heatPoints.length) {
+      const heat = L.heatLayer(heatPoints, { radius: 18, blur: 22, maxZoom: 15 });
+      heatLayerGroup.addLayer(heat);
+    }
+    heatLayerGroup.addTo(map);
+
+    document.getElementById("stat-str").textContent = strFeatures.length.toLocaleString();
+
+    // --- Layer toggles ---
+    document.getElementById("toggle-heat").addEventListener("change", (e) => {
+      if (e.target.checked) heatLayerGroup.addTo(map);
+      else map.removeLayer(heatLayerGroup);
+    });
+    document.getElementById("toggle-markers").addEventListener("change", (e) => {
+      if (e.target.checked) markerLayerGroup.addTo(map);
+      else map.removeLayer(markerLayerGroup);
+    });
+    document.getElementById("toggle-burden").addEventListener("change", (e) => {
+      if (e.target.checked) burdenLayer.addTo(map);
+      else map.removeLayer(burdenLayer);
+    });
+  } catch (err) {
+    console.error(err);
+    document.getElementById("loading").textContent = "Failed to load data — see console for details.";
+  }
+}
+
+main();
+</script>
+</body>
+</html>
