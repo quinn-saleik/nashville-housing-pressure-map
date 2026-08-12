@@ -13,6 +13,8 @@ An interactive map of short-term rental density against rent burden by census tr
 
 Nashville's STR permitting fight is a real, ongoing policy debate — bachelorette-party tourism and STR supply on one side, housing affordability and neighborhood displacement pressure on the other. This turns that debate into something you can actually look at, tract by tract, instead of an argument.
 
+<img width="1432" height="668" alt="Screenshot 2026-08-12 at 2 13 42 PM" src="https://github.com/user-attachments/assets/6babf24b-ca37-4c65-8c1e-dbd5710a7fdb" />
+
 ## How it works
 
 Single HTML file, zero build tooling, runs entirely client-side:
